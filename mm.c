@@ -52,6 +52,7 @@
 #define CHUNKSIZE (1<<8) /* Extend heap by this amount (bytes)*/
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc) ((size) | (alloc))
 /* Read and write a word at address p */
@@ -74,22 +75,49 @@
 #define GET_PRED(bp) ((bp) ? GET_PTR(PRED(bp)) : 0)
 #define GET_SUCC(bp) ((bp) ? GET_PTR(SUCC(bp)) : 0)
 
-static char *heap_listp, *free_head;
+static char *heap_listp, *free_head[10];
 
-/* 处理空闲链表的函数*/
-/* 在空闲链表中删去某一段 */
+static int find_array(size_t size){
+  /*
+  int re = 0;
+  while (size > 0) {
+    if (re == LINK_SIZE - 1) return re;
+    size >>= 2;
+    re++;
+  }
+  return re;
+  */
+  if (size <= (1 << 8)) return 0;
+  else if (size <= (1 << 10)) return 1;
+  else if (size <= (1 << 12)) return 2;
+  else if (size <= (1 << 13)) return 3;
+  else if (size <= (1 << 14)) return 4;
+  else if (size <= (1 << 15)) return 5;
+  else if (size <= (1 << 16)) return 6;
+  else return 7;
+}
+
 static void remove_block(void *ptr) {
   PUT_PTR(SUCC(GET_PRED(ptr)),GET_SUCC(ptr));
   PUT_PTR(PRED(GET_SUCC(ptr)),GET_PRED(ptr));
-  if (ptr == free_head) free_head = GET_SUCC(free_head);
+  //if (ptr == free_head) free_head = GET_SUCC(free_head);
+  int i = find_array(GET_SIZE(HDRP(ptr)));
+  if (ptr == free_head[i]) free_head[i] = GET_SUCC(free_head[i]);
 }
 
-/* 将一个新的空闲块加入链表 */
 static void push_block(void *ptr) {
-  PUT_PTR(SUCC(ptr),free_head);
-  PUT_PTR(PRED(ptr),0);
+  /*
+  PUT_PTR(SUCC(ptr), free_head);
+  PUT_PTR(PRED(ptr), 0);
   PUT_PTR(PRED(free_head),ptr);
-  free_head = ptr;
+  free_head = ptr;*/
+  
+  int i = find_array(GET_SIZE(HDRP(ptr)));
+  PUT_PTR(SUCC(ptr), free_head[i]);
+  PUT_PTR(PRED(ptr), 0);
+  PUT_PTR(PRED(free_head[i]), ptr);
+  free_head[i] = ptr;
+  
 }
 
 static void *coalesce(void *bp)
@@ -135,15 +163,24 @@ static void *extend_heap(size_t words)
 }
 
 static void *find_fit(size_t asize){
-  char* bp = free_head;
+  int h = find_array(asize);
+  char* bp = free_head[h];
+  //char *bp = free_head;
   size_t size;
   while(bp != 0){
     size = GET_SIZE(HDRP(bp));
     if (size >= asize) return bp;
     bp = GET_SUCC(bp);
   }
+  for(int i = h + 1; i < 8; i++){
+    char* bp = free_head[i];
+    while(bp != 0){
+      size = GET_SIZE(HDRP(bp));
+      if (size >= asize) return bp;
+      bp = GET_SUCC(bp);
+    }
+  }
   return NULL;
-
 }
 
 static void place(void *bp, size_t asize){
@@ -176,7 +213,8 @@ int mm_init(void)
   PUT(heap_listp + (6 * WSIZE), PACK(MINISIZE, 1)); // prologue footer
   PUT(heap_listp + (7 * WSIZE), PACK(0,1));// epilogue header
   heap_listp += 2 * WSIZE;
-  free_head = 0;
+ // free_head = 0;
+  for (int i = 0; i < 8; ++i) free_head[i] = 0;
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL)return -1;
   return 0;
 }
