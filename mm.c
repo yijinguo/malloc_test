@@ -48,7 +48,8 @@
 /* Basic constants and macros */
 #define WSIZE     4       /* Word and header/footer size (bytes) */
 #define DSIZE     8       /* Double word size (bytes) */
-#define CHUNKSIZE (1<<12) /* Extend heap by this amount (bytes)*/
+#define MINISIZE 24
+#define CHUNKSIZE (1<<8) /* Extend heap by this amount (bytes)*/
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 /* Pack a size and allocated bit into a word */
@@ -66,10 +67,30 @@
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE)))
 
-#define PRED(bp)      (GET(bp))
-#define SUCC(bp)      (GET((char*)(bp) + WSIZE))
+#define GET_PTR(p)      ((p)? *(size_t *)(p) : 0)
+#define PUT_PTR(p, val) ((p) ? *(size_t *)(p) = (size_t)(val) : 0)
+#define PRED(bp)        ((bp) ? (char *)(bp) : 0)
+#define SUCC(bp)        ((bp) ? (char *)(bp) + DSIZE : 0)
+#define GET_PRED(bp) ((bp) ? GET_PTR(PRED(bp)) : 0)
+#define GET_SUCC(bp) ((bp) ? GET_PTR(SUCC(bp)) : 0)
 
-static char* heap_listp;
+static char *heap_listp, *free_head;
+
+/* 处理空闲链表的函数*/
+/* 在空闲链表中删去某一段 */
+static void remove_block(void *ptr) {
+  PUT_PTR(SUCC(GET_PRED(ptr)),GET_SUCC(ptr));
+  PUT_PTR(PRED(GET_SUCC(ptr)),GET_PRED(ptr));
+  if (ptr == free_head) free_head = GET_SUCC(free_head);
+}
+
+/* 将一个新的空闲块加入链表 */
+static void push_block(void *ptr) {
+  PUT_PTR(SUCC(ptr),free_head);
+  PUT_PTR(PRED(ptr),0);
+  PUT_PTR(PRED(free_head),ptr);
+  free_head = ptr;
+}
 
 static void *coalesce(void *bp)
 {
@@ -77,58 +98,58 @@ static void *coalesce(void *bp)
   size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
   size_t size = GET_SIZE(HDRP(bp));
   if (prev_alloc && next_alloc) { /* Case 1 */
-    return bp;
+    //return bp;
   } else if (prev_alloc && !next_alloc) { /* Case 2 */
+    remove_block(NEXT_BLKP(bp));
     size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
   } else if (!prev_alloc && next_alloc) { /* Case 3 */
+    remove_block(PREV_BLKP(bp));
     size += GET_SIZE(HDRP(PREV_BLKP(bp)));
     PUT(FTRP(bp), PACK(size, 0));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     bp = PREV_BLKP(bp);
   } else { /* Case 4 */
+    remove_block(PREV_BLKP(bp));
+    remove_block(NEXT_BLKP(bp));
     size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
     bp = PREV_BLKP(bp);
   }
+  push_block(bp);
   return bp;
 }
 
-/* 用一个新的空闲块扩展堆 */
-/* 当堆被初始化时；当mm_malloc不能找到一个合适的匹配块时 */
 static void *extend_heap(size_t words)
 {
   char *bp;
   size_t size;
-  /*Allocate an even number of words to maintain alignment */
   size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
   if ((long)(bp = mem_sbrk(size)) == -1) return NULL;
-  /* Initialize free block header/footer and the epilogue header */
   PUT(HDRP(bp), PACK(size, 0));   /* Free block header */
   PUT(FTRP(bp), PACK(size, 0));   /* Free block footer */
   PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
-  /* Coalesce if the previous block was free */
   return coalesce(bp);
 }
 
-/* 首次适配方法 */
 static void *find_fit(size_t asize){
-  char* bp = NEXT_BLKP(heap_listp);
-  size_t size = GET_SIZE(HDRP(bp));
-  while (size > 0) {
-    if (!GET_ALLOC(HDRP(bp)) && size >= asize) break;
-    bp = NEXT_BLKP(bp);
+  char* bp = free_head;
+  size_t size;
+  while(bp != 0){
     size = GET_SIZE(HDRP(bp));
+    if (size >= asize) return bp;
+    bp = GET_SUCC(bp);
   }
-  if (size < asize) return NULL;
-  return bp;
+  return NULL;
+
 }
 
 static void place(void *bp, size_t asize){
+  remove_block(bp);
   size_t exist_size = GET_SIZE(HDRP(bp));
-  if (exist_size - asize > DSIZE) {
+  if (exist_size - asize > MINISIZE) {
     PUT(HDRP(bp), PACK(asize, 1));
     PUT(FTRP(bp), PACK(asize, 1));
     bp = NEXT_BLKP(bp);
@@ -147,15 +168,16 @@ static void place(void *bp, size_t asize){
  */
 int mm_init(void)
 {
-  /* Create the initial empty heap */
-  if ((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1) return -1;
-  PUT(heap_listp, 0);                           /* Alignment padding */
-  PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1));  /* Prologue header */
-  PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));  /* Prologue footer */
-  PUT(heap_listp + (3*WSIZE), PACK(0, 1));  /* Epilogue header */
-  heap_listp += (2*WSIZE);
-  /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-  if (extend_heap(CHUNKSIZE/WSIZE) == NULL) return -1;
+  heap_listp = mem_sbrk(8 * WSIZE);
+  PUT(heap_listp, 0);
+  PUT(heap_listp + (1 * WSIZE), PACK(MINISIZE, 1));
+  PUT_PTR(heap_listp + (2 * WSIZE), 0);
+  PUT_PTR(heap_listp + (4 * WSIZE), 0); // prologue succ
+  PUT(heap_listp + (6 * WSIZE), PACK(MINISIZE, 1)); // prologue footer
+  PUT(heap_listp + (7 * WSIZE), PACK(0,1));// epilogue header
+  heap_listp += 2 * WSIZE;
+  free_head = 0;
+  if(extend_heap(CHUNKSIZE/WSIZE) == NULL)return -1;
   return 0;
 }
 
@@ -168,19 +190,16 @@ void *malloc(size_t size)
   size_t asize;       /* Adjusted block size */
   size_t extendsize;  /* Amount to extend heap if no fit */
   char *bp;
-  /* Ignore spurious requests */
   if (size == 0) return NULL;
-  /* Adjust block size to include overhead and alignment reqs */
-  if (size <= DSIZE) 
-    asize = 2*DSIZE;
-  else
-    asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
-  /* Search the free list for a fit*/
+  //if (size <= DSIZE) 
+  //  asize = 2*DSIZE;
+  //else
+  //  asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
+  asize = ALIGN(MAX(size + MINISIZE, MINISIZE + DSIZE));
   if ((bp = find_fit(asize)) != NULL) {
     place(bp, asize);
     return bp;
   }
-  /* No fit found. Get more memory and place the block */
   extendsize = MAX(asize, CHUNKSIZE);
   if ((bp = extend_heap(extendsize/WSIZE)) == NULL ) return NULL;
   place(bp, asize);
@@ -192,7 +211,6 @@ void *malloc(size_t size)
  *      Computers have big memories; surely it won't be a problem.
  */
 void free(void *ptr){
-	/*Get gcc to be quiet */
   if (ptr < mem_heap_lo() || ptr > mem_heap_hi()) return;
   if((long)ptr == 0)puts("?");
 	size_t size = GET_SIZE(HDRP(ptr));
