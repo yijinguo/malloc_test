@@ -68,12 +68,12 @@
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE)))
 
-#define GET_PTR(p)      ((p)? *(size_t *)(p) : 0)
+#define GET_PTR(p)      ((p) ? *(size_t *)(p) : 0)
 #define PUT_PTR(p, val) ((p) ? *(size_t *)(p) = (size_t)(val) : 0)
 #define PRED(bp)        ((bp) ? (char *)(bp) : 0)
 #define SUCC(bp)        ((bp) ? (char *)(bp) + DSIZE : 0)
-#define GET_PRED(bp) ((bp) ? GET_PTR(PRED(bp)) : 0)
-#define GET_SUCC(bp) ((bp) ? GET_PTR(SUCC(bp)) : 0)
+#define GET_PRED(bp)    ((bp) ? GET_PTR(PRED(bp)) : 0)
+#define GET_SUCC(bp)    ((bp) ? GET_PTR(SUCC(bp)) : 0)
 
 #define MAX_LIST 8
 
@@ -92,8 +92,8 @@ static int find_array(size_t size){
 
 /* Remove a block from the free_list */
 static void remove_block(void *ptr) {
-  PUT_PTR(SUCC(GET_PRED(ptr)),GET_SUCC(ptr));
-  PUT_PTR(PRED(GET_SUCC(ptr)),GET_PRED(ptr));
+  PUT_PTR(SUCC(GET_PRED(ptr)), GET_SUCC(ptr));
+  PUT_PTR(PRED(GET_SUCC(ptr)), GET_PRED(ptr));
   int i = find_array(GET_SIZE(HDRP(ptr)));
   if (ptr == free_head[i]) free_head[i] = GET_SUCC(free_head[i]);
 }
@@ -160,12 +160,8 @@ static void *find_fit(size_t asize){
     bp = GET_SUCC(bp);
   }
   for(int i = h + 1; i < MAX_LIST; i++){
-    char* bp = free_head[i];
-    while(bp != 0){
-      size = GET_SIZE(HDRP(bp));
-      if (size >= asize) return bp;
-      bp = GET_SUCC(bp);
-    }
+    bp = free_head[i];
+    if (bp != 0)return bp;
   }
   return NULL;
 }
@@ -179,7 +175,8 @@ static void place(void *bp, size_t asize){
     bp = NEXT_BLKP(bp);
     PUT(HDRP(bp), PACK((exist_size - asize), 0));
     PUT(FTRP(bp), PACK((exist_size - asize), 0));
-    coalesce(bp);
+    //coalesce(bp);
+    push_block(bp);
   } else {
     PUT(HDRP(bp), PACK(exist_size, 1));
     PUT(FTRP(bp), PACK(exist_size, 1));
@@ -200,7 +197,6 @@ int mm_init(void)
   PUT(heap_listp + (6 * WSIZE), PACK(MINISIZE, 1)); // prologue footer
   PUT(heap_listp + (7 * WSIZE), PACK(0,1));// epilogue header
   heap_listp += 2 * WSIZE;
- // free_head = 0;
   for (int i = 0; i < MAX_LIST; ++i) free_head[i] = 0;
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL)return -1;
   return 0;
@@ -216,11 +212,7 @@ void *malloc(size_t size)
   size_t extendsize;  /* Amount to extend heap if no fit */
   char *bp;
   if (size == 0) return NULL;
-  //if (size <= DSIZE) 
-  //  asize = 2*DSIZE;
-  //else
-  //  asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
-  asize = ALIGN(MAX(size + MINISIZE, MINISIZE + DSIZE));
+  asize = ALIGN(MAX(size + DSIZE, MINISIZE));
   if ((bp = find_fit(asize)) != NULL) {
     place(bp, asize);
     return bp;
@@ -237,7 +229,6 @@ void *malloc(size_t size)
  */
 void free(void *ptr){
   if (ptr < mem_heap_lo() || ptr > mem_heap_hi()) return;
-  if((long)ptr == 0)puts("?");
 	size_t size = GET_SIZE(HDRP(ptr));
   PUT(HDRP(ptr), PACK(size, 0));
   PUT(FTRP(ptr), PACK(size, 0));
