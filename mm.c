@@ -75,49 +75,36 @@
 #define GET_PRED(bp) ((bp) ? GET_PTR(PRED(bp)) : 0)
 #define GET_SUCC(bp) ((bp) ? GET_PTR(SUCC(bp)) : 0)
 
-static char *heap_listp, *free_head[10];
+#define MAX_LIST 8
+
+static char *heap_listp, *free_head[MAX_LIST];
 
 static int find_array(size_t size){
-  /*
-  int re = 0;
-  while (size > 0) {
-    if (re == LINK_SIZE - 1) return re;
-    size >>= 2;
-    re++;
-  }
-  return re;
-  */
-  if (size <= (1 << 8)) return 0;
-  else if (size <= (1 << 10)) return 1;
-  else if (size <= (1 << 12)) return 2;
-  else if (size <= (1 << 13)) return 3;
+  if (size <= (1 << 5)) return 0;
+  else if (size <= (1 << 8)) return 1;
+  else if (size <= (1 << 10)) return 2;
+  else if (size <= (1 << 12)) return 3;
   else if (size <= (1 << 14)) return 4;
   else if (size <= (1 << 15)) return 5;
   else if (size <= (1 << 16)) return 6;
   else return 7;
 }
 
+/* Remove a block from the free_list */
 static void remove_block(void *ptr) {
   PUT_PTR(SUCC(GET_PRED(ptr)),GET_SUCC(ptr));
   PUT_PTR(PRED(GET_SUCC(ptr)),GET_PRED(ptr));
-  //if (ptr == free_head) free_head = GET_SUCC(free_head);
   int i = find_array(GET_SIZE(HDRP(ptr)));
   if (ptr == free_head[i]) free_head[i] = GET_SUCC(free_head[i]);
 }
 
+/* Add a block into the free_list */
 static void push_block(void *ptr) {
-  /*
-  PUT_PTR(SUCC(ptr), free_head);
-  PUT_PTR(PRED(ptr), 0);
-  PUT_PTR(PRED(free_head),ptr);
-  free_head = ptr;*/
-  
   int i = find_array(GET_SIZE(HDRP(ptr)));
   PUT_PTR(SUCC(ptr), free_head[i]);
   PUT_PTR(PRED(ptr), 0);
   PUT_PTR(PRED(free_head[i]), ptr);
   free_head[i] = ptr;
-  
 }
 
 static void *coalesce(void *bp)
@@ -172,7 +159,7 @@ static void *find_fit(size_t asize){
     if (size >= asize) return bp;
     bp = GET_SUCC(bp);
   }
-  for(int i = h + 1; i < 8; i++){
+  for(int i = h + 1; i < MAX_LIST; i++){
     char* bp = free_head[i];
     while(bp != 0){
       size = GET_SIZE(HDRP(bp));
@@ -214,7 +201,7 @@ int mm_init(void)
   PUT(heap_listp + (7 * WSIZE), PACK(0,1));// epilogue header
   heap_listp += 2 * WSIZE;
  // free_head = 0;
-  for (int i = 0; i < 8; ++i) free_head[i] = 0;
+  for (int i = 0; i < MAX_LIST; ++i) free_head[i] = 0;
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL)return -1;
   return 0;
 }
@@ -315,6 +302,5 @@ void *calloc (size_t nmemb, size_t size)
  *      so nah!
  */
 void mm_checkheap(int verbose){
-	/*Get gcc to be quiet. */
 	verbose = verbose;
 }
