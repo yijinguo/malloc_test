@@ -77,7 +77,7 @@
 
 #define MAX_LIST 8
 
-static char *heap_listp, *free_head[MAX_LIST];
+static char *heap_listp, *tail_listp, *free_head[MAX_LIST];
 
 static int find_array(size_t size){
   if (size <= (1 << 5)) return 0;
@@ -95,7 +95,7 @@ static void remove_block(void *ptr) {
   PUT_PTR(SUCC(GET_PRED(ptr)), GET_SUCC(ptr));
   PUT_PTR(PRED(GET_SUCC(ptr)), GET_PRED(ptr));
   int i = find_array(GET_SIZE(HDRP(ptr)));
-  if (ptr == free_head[i]) free_head[i] = GET_SUCC(free_head[i]);
+  if (ptr == free_head[i]) free_head[i] = (char *)GET_SUCC(free_head[i]);
 }
 
 /* Add a block into the free_list */
@@ -146,6 +146,7 @@ static void *extend_heap(size_t words)
   PUT(HDRP(bp), PACK(size, 0));   /* Free block header */
   PUT(FTRP(bp), PACK(size, 0));   /* Free block footer */
   PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
+  tail_listp = NEXT_BLKP(bp);
   return coalesce(bp);
 }
 
@@ -157,7 +158,7 @@ static void *find_fit(size_t asize){
   while(bp != 0){
     size = GET_SIZE(HDRP(bp));
     if (size >= asize) return bp;
-    bp = GET_SUCC(bp);
+    bp = (char *)GET_SUCC(bp);
   }
   for(int i = h + 1; i < MAX_LIST; i++){
     bp = free_head[i];
@@ -196,6 +197,7 @@ int mm_init(void)
   PUT_PTR(heap_listp + (4 * WSIZE), 0); // prologue succ
   PUT(heap_listp + (6 * WSIZE), PACK(MINISIZE, 1)); // prologue footer
   PUT(heap_listp + (7 * WSIZE), PACK(0,1));// epilogue header
+  tail_listp = heap_listp + 8 * WSIZE;
   heap_listp += 2 * WSIZE;
   for (int i = 0; i < MAX_LIST; ++i) free_head[i] = 0;
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL)return -1;
@@ -294,4 +296,34 @@ void *calloc (size_t nmemb, size_t size)
  */
 void mm_checkheap(int verbose){
 	verbose = verbose;
+  if (verbose == 0) {
+    printf("prologue block -- header: %s, footer: %s;", HDRP(heap_listp), FTRP(heap_listp));
+    printf("epilogue block -- header: %s.\n", HDRP(heap_listp));
+    char *ptr = heap_listp, *last = NULL;
+    int num = 0;
+    while (GET_SIZE(HDRP(ptr)) != 0) {
+      num++;
+      if (last != NULL) {
+        if (HDRP(ptr) - FTRP(last) != DSIZE) 
+          printf("Error: Header and Footer between %d and %d doesn't match.\n", num-1, num); 
+        if (!GET_ALLOC(HDRP(last)) && !GET_ALLOC(HDRP(ptr)))
+          printf("Warning: Successive free blocks from %d and %d.\n", num-1, num);
+      }
+      printf("Order%d -- header: %s, footer: %s, alloca: %d, size: %d\n", 
+       num, HDRP(ptr), FTRP(ptr), GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)));
+      last = ptr;
+      ptr = NEXT_BLKP(ptr);
+    }
+  } else if (verbose == 1) {
+    for (int i = 0; i < MAX_LIST; ++i) {
+      char *last = NULL, *ptr = (char*)free_head[i];
+      while (ptr != 0) {
+        if ((char *)GET_PRED(ptr) != last) 
+          printf("Error: Free blocks' connection doesn't match.\n");
+        last = ptr;
+        ptr = (char *)GET_SUCC(ptr);
+      }
+      
+    }
+  }
 }
